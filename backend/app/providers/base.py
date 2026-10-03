@@ -234,6 +234,17 @@ class ProviderRateLimited(Exception):
     """
 
 
+class ProviderDataUnavailable(Exception):
+    """Raised when a provider could not fetch any usable data for a connection.
+
+    The session may still be valid: Enable Banking keeps the consent
+    ``AUTHORIZED`` and answers ``400 ASPSP_ERROR`` on every account, which its
+    own FAQ classifies as a bank-side failure to retry with backoff. So this is
+    not "reauth now" — callers retry a few cycles and only escalate to a
+    user-visible error once the failures persist.
+    """
+
+
 class ProviderNotConfiguredError(Exception):
     """Raised when a connection references a provider missing from the registry.
 

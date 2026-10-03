@@ -30,6 +30,7 @@ from app.providers.base import (
     ConnectionData,
     InstitutionData,
     InstitutionListData,
+    ProviderDataUnavailable,
     ProviderRateLimited,
     ProviderUserActionRequired,
     SessionExpiredError,
@@ -593,6 +594,17 @@ class EnableBankingProvider(BankProvider):
                 logger.warning("Failed to fetch details for account %s: %s", uid, exc)
                 continue
             result.append(await self._build_account(details, stable_external_ids.get(uid)))
+        if uids and not result:
+            # EB listed accounts but not one could be read. Returning [] would
+            # make sync store "0 accounts" and leave the connection "active" —
+            # a silent false success. EB's FAQ treats ASPSP_ERROR (which is
+            # exactly what this looks like) as a bank-side failure to retry with
+            # backoff, so surface it as transient and let the sync layer decide
+            # when to stop retrying.
+            raise ProviderDataUnavailable(
+                f"Enable Banking returned no usable data for any of the "
+                f"{len(uids)} account(s) on session {session_id}"
+            )
         return result
 
     async def get_transactions(

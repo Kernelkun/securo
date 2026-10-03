@@ -30,6 +30,7 @@ from app.providers import get_provider
 from app.providers.base import (
     AccountData,
     HoldingData,
+    ProviderDataUnavailable,
     ProviderNotConfiguredError,
     ProviderRateLimited,
     ProviderUserActionRequired,
@@ -1925,6 +1926,15 @@ async def _sync_credit_card_bills(
     return by_external_id
 
 
+# How many consecutive "provider returned no usable data" syncs a connection may
+# accumulate before it is flagged for a user-visible reconnect. EB's own FAQ
+# says its generic ASPSP error should be retried with backoff, so a single
+# failure must not flip the connection to "error" — but retrying forever would
+# hide a bank that is genuinely broken.
+SYNC_FAILURE_ESCALATION_THRESHOLD = 3
+_SYNC_FAILURE_COUNT_KEY = "sync_failures"
+
+
 async def sync_connection(
     session: AsyncSession,
     connection_id: uuid.UUID,
@@ -2494,6 +2504,13 @@ async def sync_connection(
             connection.status = "error"
         else:
             connection.status = "active"
+        # A successful run clears the transient-failure streak, so an old
+        # failure can't push a now-healthy connection over the threshold.
+        if (connection.settings or {}).get(_SYNC_FAILURE_COUNT_KEY):
+            connection.settings = {
+                **(connection.settings or {}),
+                _SYNC_FAILURE_COUNT_KEY: 0,
+            }
         await session.commit()
         await session.refresh(connection)
         return connection, merged_count
@@ -2531,6 +2548,42 @@ async def sync_connection(
         # The row can vanish if the connection was deleted mid-sync. Fall back
         # to the one we already hold rather than raising: re-raising here would
         # escape as a 500, which is exactly what this handler exists to avoid.
+        refreshed = await session.get(BankConnection, connection_id)
+        return refreshed or connection, 0
+    except ProviderDataUnavailable as exc:
+        # The bank/aggregator served no usable account this run, while the
+        # consent itself may still be valid (EB keeps the session AUTHORIZED and
+        # answers ASPSP_ERROR, which its FAQ says to retry with backoff). Retry
+        # a few cycles; only once the failures persist do we send the user to a
+        # reconnect they may not need.
+        await session.rollback()
+        failures = 0
+        async with session.begin():
+            conn = await session.get(BankConnection, connection_id)
+            if conn is not None:
+                settings = dict(conn.settings or {})
+                failures = int(settings.get(_SYNC_FAILURE_COUNT_KEY) or 0) + 1
+                settings[_SYNC_FAILURE_COUNT_KEY] = failures
+                # Rebind instead of mutating in place: a JSON column only
+                # marks itself dirty on attribute reassignment.
+                conn.settings = settings
+                if failures >= SYNC_FAILURE_ESCALATION_THRESHOLD:
+                    conn.status = "error"
+                elif conn.status != "expired":
+                    conn.status = "active"
+        if failures >= SYNC_FAILURE_ESCALATION_THRESHOLD:
+            raise ProviderUserActionRequired(
+                "The bank rejected every account request for this connection "
+                f"{failures} syncs in a row. Reconnect to re-authorise.",
+                code="data_unavailable",
+            ) from exc
+        logger.warning(
+            "Provider returned no usable data for connection %s (failure %d/%d); "
+            "leaving it active so a later sync retries",
+            connection_id,
+            failures,
+            SYNC_FAILURE_ESCALATION_THRESHOLD,
+        )
         refreshed = await session.get(BankConnection, connection_id)
         return refreshed or connection, 0
     except Exception:
