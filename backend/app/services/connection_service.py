@@ -1347,6 +1347,8 @@ async def _find_existing_connected_account(
         stable_rows = [
             row for row in stable_rows if row.external_id not in incoming_external_ids
         ]
+        if len(stable_rows) > 1:
+            return None
         if len(stable_rows) == 1:
             stable_rows[0].external_id = acc_data.external_id
             return stable_rows[0]
@@ -1358,7 +1360,7 @@ async def _find_existing_connected_account(
     # (a shared last-4 must never merge two accounts), and candidates limited to
     # rows with no stable id — a row that is already identified is a different
     # account, so adopting it would overwrite its identity and mix histories.
-    if acc_data.masked_number:
+    if connection.provider == "enable_banking" and acc_data.masked_number:
         masked_rows = (await session.execute(
             select(Account).where(
                 Account.connection_id == connection.id,
