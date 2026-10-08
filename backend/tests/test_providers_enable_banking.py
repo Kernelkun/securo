@@ -681,7 +681,7 @@ async def test_get_accounts_exposes_stable_identification_hash(eb_keys):
 
     assert len(accounts) == 1
     assert accounts[0].external_id == "acc-1"
-    assert accounts[0].stable_id == "hash-1"
+    assert accounts[0].stable_external_id == "hash-1"
 
 
 
@@ -707,6 +707,36 @@ async def test_get_accounts_raises_session_expired_when_details_unauthorized(eb_
         if re.fullmatch(r"/accounts/[^/]+/details", request.url.path):
             return httpx.Response(401, json={"code": 401, "error": "INVALID_TOKEN"})
         raise AssertionError(f"unexpected path {request.url.path}")
+
+    with _patch_client(provider, handler):
+        with pytest.raises(SessionExpiredError):
+            await provider.get_accounts(_CREDENTIALS)
+
+
+@pytest.mark.asyncio
+async def test_get_accounts_raises_session_expired_on_token_expired(eb_keys):
+    """EB sometimes answers 400 with tppMessages code TOKEN_EXPIRED.
+
+    The bank ended the consent before valid_until, but instead of the 401/410
+    we already map, EB returns a 400 whose body carries the specific code.
+    Detect it explicitly so the sync layer marks the connection expired
+    instead of inferring it from an empty account list (issue #1061).
+    """
+    provider = EnableBankingProvider()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/sessions/sess-x":
+            return httpx.Response(200, json={
+                "session_id": "sess-x",
+                "accounts_data": [{"uid": "acc-1"}],
+            })
+        if re.fullmatch(r"/accounts/[^/]+/details", request.url.path):
+            return httpx.Response(400, json={
+                "code": 400,
+                "message": "Error interacting with ASPSP",
+                "tppMessages": [{"category": "ERROR", "code": "TOKEN_EXPIRED", "path": "/psd2/v1.1/accounts/account_id"}],
+            })
+        raise AssertionError(f"Unexpected path {request.url.path}")
 
     with _patch_client(provider, handler):
         with pytest.raises(SessionExpiredError):

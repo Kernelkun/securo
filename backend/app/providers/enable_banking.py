@@ -325,6 +325,23 @@ class EnableBankingProvider(BankProvider):
                 f"Enable Banking {method} {path} → 429: {resp.text[:200]}"
             )
         if resp.status_code >= 400:
+            # EB sometimes answers 400 with a specific tppMessages code instead
+            # of the 401/410 we map to SessionExpiredError above. TOKEN_EXPIRED
+            # means the bank ended the consent before valid_until — the session
+            # is dead and the user must re-authorize. Detect it explicitly so
+            # the sync layer marks the connection expired instead of inferring
+            # it from an empty account list.
+            try:
+                body = resp.json()
+            except ValueError:
+                body = {}
+            tpp_messages = body.get("tppMessages") or []
+            if isinstance(tpp_messages, list):
+                for msg in tpp_messages:
+                    if isinstance(msg, dict) and msg.get("code") == "TOKEN_EXPIRED":
+                        raise SessionExpiredError(
+                            f"Enable Banking returned TOKEN_EXPIRED for {path}"
+                        )
             raise httpx.HTTPStatusError(
                 f"Enable Banking {method} {path} → {resp.status_code}: {resp.text[:300]}",
                 request=resp.request,
