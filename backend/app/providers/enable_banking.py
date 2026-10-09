@@ -516,6 +516,10 @@ class EnableBankingProvider(BankProvider):
         self, raw: dict, stable_external_id: Optional[str] = None
     ) -> AccountData:
         uid = raw.get("uid") or raw.get("account_uid") or ""
+        # POST /sessions includes identification_hash per account; use it when
+        # the caller did not supply one explicitly.
+        if stable_external_id is None:
+            stable_external_id = raw.get("identification_hash")
         currency = raw.get("currency") or "EUR"
         # EB doesn't include balances in the session payload; fetch separately.
         balance = Decimal("0")
@@ -593,10 +597,9 @@ class EnableBankingProvider(BankProvider):
             for entry in (data.get("accounts_data") or [])
             if isinstance(entry, dict) and entry.get("uid")
         }
-        logger.info(
-            "EB session payload accounts_data: %s",
-            data.get("accounts_data"),
-        )
+        print(f"DEBUG EB accounts_data: {data.get('accounts_data')}")
+        print(f"DEBUG EB accounts: {data.get('accounts')}")
+        print(f"DEBUG EB full session payload keys: {list(data.keys())}")
         result: list[AccountData] = []
         for uid in uids:
             try:

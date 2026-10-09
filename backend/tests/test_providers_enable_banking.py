@@ -322,6 +322,45 @@ async def test_handle_oauth_callback_builds_connection_data(eb_keys):
 
 
 @pytest.mark.asyncio
+async def test_handle_oauth_callback_extracts_identification_hash(eb_keys):
+    """POST /sessions includes identification_hash per account; _build_account
+    must extract it so the sync layer can match on stable_external_id."""
+    provider = EnableBankingProvider()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/sessions":
+            return httpx.Response(
+                200,
+                json={
+                    "session_id": "sess-3",
+                    "accounts": [
+                        {
+                            "uid": "acc-uid-9",
+                            "currency": "EUR",
+                            "display_name": "Savings",
+                            "cash_account_type": "SVGS",
+                            "identification_hash": "hash-abc-123",
+                        }
+                    ],
+                    "aspsp": {"name": "Nordea", "country": "FI"},
+                    "access": {"valid_until": "2027-01-01T00:00:00Z"},
+                },
+            )
+        if path == "/accounts/acc-uid-9/balances":
+            return httpx.Response(200, json={"balances": []})
+        return httpx.Response(404)
+
+    with _patch_client(provider, handler):
+        conn = await provider.handle_oauth_callback("code-xyz")
+
+    assert len(conn.accounts) == 1
+    acc = conn.accounts[0]
+    assert acc.external_id == "acc-uid-9"
+    assert acc.stable_external_id == "hash-abc-123"
+
+
+@pytest.mark.asyncio
 async def test_get_transactions_parses_nested_and_flat_shapes(eb_keys):
     """Both `transactions:{booked,pending}` and flat list must produce the
     same internal TransactionData list."""
