@@ -593,6 +593,10 @@ class EnableBankingProvider(BankProvider):
             for entry in (data.get("accounts_data") or [])
             if isinstance(entry, dict) and entry.get("uid")
         }
+        logger.info(
+            "EB session payload accounts_data: %s",
+            data.get("accounts_data"),
+        )
         result: list[AccountData] = []
         for uid in uids:
             try:
