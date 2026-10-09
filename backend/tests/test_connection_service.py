@@ -456,7 +456,8 @@ async def test_token_reconnect_updates_existing_connection_without_deleting_acco
         accounts=[],
     ))
 
-    with patch("app.services.connection_service.get_provider", return_value=mock_provider):
+    with patch("app.services.connection_service.get_provider", return_value=mock_provider), \
+         patch("app.worker.celery_app.send_task"):
         reconnected = await handle_oauth_callback(
             session,
             test_workspace.id,
@@ -477,6 +478,44 @@ async def test_token_reconnect_updates_existing_connection_without_deleting_acco
     ).scalars().all()
     assert [a.external_id for a in remaining_accounts] == ["existing-account"]
     mock_provider.handle_oauth_callback.assert_awaited_once_with("fresh-setup-token")
+
+
+@pytest.mark.asyncio
+async def test_token_reconnect_dispatches_immediate_sync(
+    session: AsyncSession, test_user, test_workspace
+):
+    """Reauth dispatches an immediate sync so the user sees fresh data."""
+    existing = await _make_connection(session, test_user.id, "Old SimpleFIN")
+    existing.provider = "simplefin"
+    existing.external_id = "old-simplefin-conn"
+    existing.credentials = {"access_url_enc": "old-encrypted-url"}
+    existing.status = "error"
+    existing.last_sync_at = datetime.now(timezone.utc)
+    await session.commit()
+
+    mock_provider = AsyncMock()
+    mock_provider.handle_oauth_callback = AsyncMock(return_value=ConnectionData(
+        external_id="new-simplefin-conn",
+        institution_name="New SimpleFIN Bank",
+        credentials={"access_url_enc": "new-encrypted-url"},
+        accounts=[],
+    ))
+
+    with patch("app.services.connection_service.get_provider", return_value=mock_provider), \
+         patch("app.worker.celery_app.send_task") as mock_send_task:
+        await handle_oauth_callback(
+            session,
+            test_workspace.id,
+            test_user.id,
+            "fresh-setup-token",
+            provider_name="simplefin",
+            reconnect_connection_id=existing.id,
+        )
+
+    mock_send_task.assert_called_once_with(
+        "app.tasks.sync_tasks.sync_single_connection",
+        args=[str(existing.id), str(test_user.id)],
+    )
 
 
 @pytest.mark.asyncio

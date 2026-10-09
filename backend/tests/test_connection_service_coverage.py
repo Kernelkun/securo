@@ -974,7 +974,8 @@ async def test_oauth_callback_reconnect_updates_existing(
                    "workspace_id": str(test_workspace.id),
                    "provider": "test",
                    "reconnect_connection_id": str(existing.id),
-               }):
+               }), \
+         patch("app.worker.celery_app.send_task"):
         result = await handle_oauth_callback(
             session, test_workspace.id, test_user.id, "code", state="s",
         )

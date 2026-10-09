@@ -1078,6 +1078,13 @@ async def handle_oauth_callback(
         existing_reconnect.last_sync_at = None
         await session.commit()
         await session.refresh(existing_reconnect)
+        # Dispatch an immediate sync so the user sees fresh data without
+        # waiting for the next Celery beat cycle.
+        from app.worker import celery_app
+        celery_app.send_task(
+            "app.tasks.sync_tasks.sync_single_connection",
+            args=[str(existing_reconnect.id), str(user_id)],
+        )
         return existing_reconnect
 
     flow_params = dict(state_payload.get("flow_params") or {})
