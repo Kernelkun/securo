@@ -335,7 +335,7 @@ class EnableBankingProvider(BankProvider):
                 body = resp.json()
             except ValueError:
                 body = {}
-            if body.get("response_error") == "ASPSP_ERROR":
+            if body.get("error") == "ASPSP_ERROR":
                 raise SessionExpiredError(
                     f"Enable Banking returned ASPSP_ERROR for {path}"
                 )

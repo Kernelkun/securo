@@ -596,13 +596,14 @@ async def test_refresh_credentials_valid_passes(eb_keys):
 
 @pytest.mark.asyncio
 async def test_get_accounts_raises_data_unavailable_when_every_account_fails(eb_keys):
-    """EB lists accounts but every /details call 400s with ASPSP_ERROR.
+    """EB lists accounts but every /details call 400s with a generic error.
 
-    EB's FAQ classifies ASPSP_ERROR as a bank-side failure and says to retry
-    with backoff — it does not mean the consent died. What must NOT happen is
-    returning an empty list: sync would store nothing and leave the connection
-    "active", a silent false success. The provider surfaces the failure, and
-    the retry-vs-escalate decision belongs to the sync layer.
+    A generic 400 (not ASPSP_ERROR) is a transient per-account failure: the
+    provider skips that account and keeps the ones that did resolve. What
+    must NOT happen is returning an empty list when at least one account
+    could be read: sync would store nothing and leave the connection "active",
+    a silent false success. The provider surfaces the failure, and the
+    retry-vs-escalate decision belongs to the sync layer.
     """
     provider = EnableBankingProvider()
 
@@ -621,9 +622,9 @@ async def test_get_accounts_raises_data_unavailable_when_every_account_fails(eb_
                     "error_name": "HttpException",
                     "error_data": {},
                 },
-                "error": "ASPSP_ERROR",
+                "error": "GENERIC_ERROR",
             })
-        raise AssertionError(f"unexpected path {request.url.path}")
+        raise AssertionError(f"Unexpected path {request.url.path}")
 
     with _patch_client(provider, handler):
         with pytest.raises(ProviderDataUnavailable):
@@ -669,7 +670,7 @@ async def test_get_accounts_keeps_working_accounts_when_one_fails(eb_keys):
             return httpx.Response(400, json={
                 "code": 400,
                 "message": "Error interacting with ASPSP",
-                "error": "ASPSP_ERROR",
+                "error": "GENERIC_ERROR",
                 "detail": None,
             })
         raise AssertionError(f"unexpected path {path}")
@@ -774,7 +775,7 @@ async def test_get_accounts_raises_session_expired_on_aspsp_error(eb_keys):
             return httpx.Response(400, json={
                 "code": 400,
                 "message": "Error interacting with ASPSP",
-                "response_error": "ASPSP_ERROR",
+                "error": "ASPSP_ERROR",
             })
         raise AssertionError(f"Unexpected path {request.url.path}")
 
