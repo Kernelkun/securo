@@ -714,13 +714,14 @@ async def test_get_accounts_raises_session_expired_when_details_unauthorized(eb_
 
 
 @pytest.mark.asyncio
-async def test_get_accounts_raises_session_expired_on_token_expired(eb_keys):
-    """EB sometimes answers 400 with tppMessages code TOKEN_EXPIRED.
+async def test_get_accounts_raises_session_expired_on_aspsp_error(eb_keys):
+    """EB answers 400 with response_error ASPSP_ERROR when the bank ends the
+    consent before valid_until.
 
-    The bank ended the consent before valid_until, but instead of the 401/410
-    we already map, EB returns a 400 whose body carries the specific code.
-    Detect it explicitly so the sync layer marks the connection expired
-    instead of inferring it from an empty account list (issue #1061).
+    The session stays AUTHORIZED on EB's side, so refresh_credentials does not
+    catch it — but the access token is dead. Detect it explicitly so the sync
+    layer marks the connection expired instead of inferring it from an empty
+    account list (issue #1061).
     """
     provider = EnableBankingProvider()
 
@@ -734,7 +735,7 @@ async def test_get_accounts_raises_session_expired_on_token_expired(eb_keys):
             return httpx.Response(400, json={
                 "code": 400,
                 "message": "Error interacting with ASPSP",
-                "tppMessages": [{"category": "ERROR", "code": "TOKEN_EXPIRED", "path": "/psd2/v1.1/accounts/account_id"}],
+                "response_error": "ASPSP_ERROR",
             })
         raise AssertionError(f"Unexpected path {request.url.path}")
 
